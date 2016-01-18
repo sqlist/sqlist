@@ -4,6 +4,91 @@ import sqlite3
 import pickle
 
 
+class SQLiteSequence(object):
+    __statements = [
+        'CREATE TABLE IF NOT EXISTS %s(key BLOB, value BLOB NOT NULL);',
+        'CREATE INDEX IF NOT EXISTS key_idx ON %s(key);'
+    ]
+
+    def __init__(self, filename, autocommit=True, drop=False, journal_mode='DELETE', key=None, table_name='data',
+                 serializer=pickle):
+        if not (hasattr(serializer, 'dumps') or hasattr(serializer, 'loads')):
+            raise TypeError('serializer must implement loads and dumps methods')
+        self.serializer = serializer
+        self.autocommit = autocommit
+        self.table_name = table_name
+        journal_modes = ['WAL', 'OFF', 'DELETE', 'TRUNCATE', 'PERSIST', 'MEMORY']
+        if journal_mode not in journal_modes:
+            raise ValueError('journal_mode must be one of %s' % journal_modes)
+        self.db = sqlite3.connect(filename)
+        self.cursor = self.db.cursor()
+        if drop:
+            self.cursor.execute('DROP TABLE IF EXISTS %s;' % self.table_name)
+        self.cursor.execute('PRAGMA journal_mode = %s' % journal_mode)
+        for statement in self.__statements:
+            self.cursor.execute(statement % self.table_name)
+        self.commit()
+
+        if key:
+            if callable(key):
+                self.key = key
+            else:
+                raise TypeError('%s object is not callable' % type(key))
+        else:
+            self.key = lambda _: None
+
+    def __len__(self):
+        return self.cursor.execute('SELECT COUNT(*) FROM %s;' % self.table_name).fetchone()[0]
+
+    def __contains__(self, item):
+        return bool(
+            self.cursor.execute('SELECT oid FROM %s WHERE value = ?;' % self.table_name,
+                                [self.pack(item)]).fetchone()
+        )
+
+    def __bool__(self):
+        return bool(self.cursor.execute('SELECT oid FROM %s LIMIT 1;' % self.table_name).fetchone())
+
+    def __iter__(self):
+        for item in self.cursor.execute('SELECT value FROM %s;' % self.table_name):
+            yield self.unpack(item[0])
+        raise StopIteration
+
+    def commit(self):
+        self.db.commit()
+
+    def flush(self):
+        self.cursor.execute('DELETE FROM %s;' % self.table_name)
+        self.commit()
+
+    def pack(self, value):
+        return sqlite3.Binary(self.serializer.dumps(value))
+
+    def unpack(self, value):
+        return self.serializer.loads(value)
+
+    def append(self, value):
+        raise NotImplementedError
+
+    def extend(self, lst):
+        raise NotImplementedError
+
+    def pop(self, index=-1):
+        raise NotImplementedError
+
+    def __getitem__(self, item):
+        raise NotImplementedError
+
+    def __setitem__(self, key, value):
+        raise NotImplementedError
+
+    def __delitem__(self, key):
+        raise NotImplementedError
+
+    def __eq__(self, other):
+        raise NotImplementedError
+
+
 class SQList(object):
     """
     List-like object that stores data in SQLite database
@@ -213,3 +298,7 @@ class SQList(object):
                     position -= 1
             else:
                 position += 1
+
+
+def open(filename, key=None, drop=True):
+    return SQList(path=filename, key=key, drop=drop)
