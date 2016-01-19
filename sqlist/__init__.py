@@ -54,12 +54,21 @@ class SQLiteSequence(object):
             yield self.unpack(item[0])
         raise StopIteration
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
     def commit(self):
         self.db.commit()
 
     def flush(self):
         self.cursor.execute('DELETE FROM %s;' % self.table_name)
         self.commit()
+
+    def close(self):
+        self.db.close()
 
     def pack(self, value):
         return sqlite3.Binary(self.serializer.dumps(value))
@@ -300,5 +309,57 @@ class SQList(object):
                 position += 1
 
 
-def open(filename, key=None, drop=True):
+class SQTuple(SQLiteSequence):
+    __statements = [
+        'CREATE TABLE IF NOT EXISTS %s(value BLOB NOT NULL);',
+    ]
+
+    def get_last_id(self):
+        result = self.cursor.execute('SELECT oid FROM %s ORDER BY oid DESC LIMIT 1;' % self.table_name).fetchone()
+        if result is None:
+            return 0
+        else:
+            return result[0]
+
+    def __len__(self):
+        return self.get_last_id()
+
+    def __getitem__(self, index):
+        if isinstance(index, int):
+            offset, stop, stride = slice(index, index + 1).indices(len(self))
+            if stop == 0:
+                stop = offset + 1
+        elif isinstance(index, slice):
+            offset, stop, stride = index.indices(len(self))
+        else:
+            raise TypeError('int or slice expected, %s found' % index.__class__.__name__)
+        result = self.cursor.execute(
+            'SELECT value FROM %s WHERE oid > ? AND oid <= ? ORDER BY oid ASC;' % self.table_name, [offset, stop]
+        )
+        if isinstance(index, int):
+            result = result.fetchone()
+            if result is None:
+                raise IndexError('%s is out of range' % index)
+            return self.unpack(result[0])
+        else:
+            lst = [self.unpack(item[0]) for item in result]
+            if stride != 1:
+                return lst[::stride]
+            return lst
+
+    def append(self, value):
+        self.extend([value])
+
+    def extend(self, lst):
+        self.cursor.executemany(
+            'INSERT INTO %s(value) VALUES(?);' % self.table_name,
+            ([self.pack(value)] for value in lst)
+        )
+        if self.autocommit:
+            self.commit()
+
+
+def open(filename, key=None, drop=False, no_deletions=False, journal_mode='DELETE'):
+    if no_deletions:
+        return SQTuple(filename=filename, drop=drop, journal_mode=journal_mode)
     return SQList(path=filename, key=key, drop=drop)
