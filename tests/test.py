@@ -3,6 +3,7 @@
 import unittest
 import tempfile
 import os
+from random import randint
 
 import sqlist
 
@@ -162,3 +163,67 @@ class TestSQList(unittest.TestCase):
         self.comparable_values.sort(reverse=True)
         self.assertEqual(sl, self.comparable_values)
         self.assertTrue(sl.key is None)
+
+
+class SQTupleTests(unittest.TestCase):
+    def setUp(self):
+        self.seq = list(randint(0, 10000) for _ in range(100))
+
+    def test_extend(self):
+        with sqlist.open(':memory:', no_deletions=True) as l:
+            l.extend(self.seq)
+            self.assertEqual(list(l), self.seq)
+
+    def test_append(self):
+        with sqlist.open(':memory:', no_deletions=True) as l:
+            l.extend(self.seq)
+            l.append('hello')
+            self.assertEqual(l[-1], 'hello')
+
+    def test_get_item(self):
+        with sqlist.open(':memory:', no_deletions=True) as l:
+            l.extend(self.seq)
+            for i in (-1, 0, 1, 2, -2, 50):
+                self.assertEqual(l[i], self.seq[i])
+
+            self.assertEqual(l[-1:], self.seq[-1:])
+            self.assertEqual(l[:5], self.seq[:5])
+            self.assertEqual(l[2:25], self.seq[2:25])
+            self.assertEqual(l[25:2], self.seq[25:2])
+            self.assertEqual(l[:-1], self.seq[:-1])
+            self.assertEqual(l[-1:-2], self.seq[-1:-2])
+            self.assertEqual(l[-3:-5], self.seq[-3:-5])
+
+    def test_len(self):
+        with sqlist.open(':memory:', no_deletions=True) as l:
+            l.extend(self.seq)
+            i = 0
+            for _ in l:
+                i += 1
+            self.assertEqual(len(l), i)
+
+    def test_json_serializer(self):
+        import json
+        with sqlist.open(':memory:', no_deletions=True, serializer=json) as l:
+            l.extend(self.seq)
+            self.assertEqual(list(l), self.seq)
+
+        data = [{'key': {'nested key': i**2}} for i in range(10)]
+        with sqlist.open(':memory:', no_deletions=True, serializer=json) as l:
+            l.extend(data)
+            self.assertEqual(list(l), data)
+
+    def test_flush(self):
+        with sqlist.open(':memory:', no_deletions=True) as l:
+            l.extend(self.seq)
+            l.flush()
+            l.extend(self.seq)
+            i = 0
+            for _ in l:
+                i += 1
+            self.assertEqual(i, len(l))
+            for i in (-1, 0, 1):
+                self.assertEqual(l[i], self.seq[i])
+
+if __name__ == '__main__':
+    unittest.main()
