@@ -71,7 +71,7 @@ class SQLiteSequence(object):
         self.db.close()
 
     def pack(self, value):
-        return sqlite3.Binary(self.serializer.dumps(value))
+        return self.serializer.dumps(value)
 
     def unpack(self, value):
         return self.serializer.loads(value)
@@ -331,35 +331,37 @@ class SQTuple(SQLiteSequence):
                 stop = offset + 1
         elif isinstance(index, slice):
             offset, stop, stride = index.indices(len(self))
+            if stride != 1:
+                raise ValueError('step is not supported')
         else:
             raise TypeError('int or slice expected, %s found' % index.__class__.__name__)
+
         result = self.cursor.execute(
             'SELECT value FROM %s WHERE oid > ? AND oid <= ? ORDER BY oid ASC;' % self.table_name, [offset, stop]
         )
+
         if isinstance(index, int):
             result = result.fetchone()
             if result is None:
                 raise IndexError('%s is out of range' % index)
             return self.unpack(result[0])
         else:
-            lst = [self.unpack(item[0]) for item in result]
-            if stride != 1:
-                return lst[::stride]
-            return lst
+            return [self.unpack(item[0]) for item in result]
 
     def append(self, value):
-        self.extend([value])
+        self.extend((value,))
 
     def extend(self, lst):
         self.cursor.executemany(
             'INSERT INTO %s(value) VALUES(?);' % self.table_name,
-            ([self.pack(value)] for value in lst)
+            ((self.pack(value),) for value in lst)
         )
         if self.autocommit:
             self.commit()
 
 
-def open(filename, key=None, drop=False, no_deletions=False, journal_mode='DELETE'):
+def open(filename, key=None, drop=False, no_deletions=False, journal_mode='DELETE', autocommit=True, serializer=pickle):
     if no_deletions:
-        return SQTuple(filename=filename, drop=drop, journal_mode=journal_mode)
+        return SQTuple(filename=filename, drop=drop, journal_mode=journal_mode, autocommit=autocommit,
+                       serializer=serializer)
     return SQList(path=filename, key=key, drop=drop)
